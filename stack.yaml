@@ -1,0 +1,5 @@
+resolver: lts-11.4
+packages:
+    - ./message-pair
+    - ./message-pair-websockets
+    - ./message-pair-async
