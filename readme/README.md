@@ -10,7 +10,7 @@ When one wants to run code on only the server, one can use `runOnServer`. If `lo
 
 `runOnServer` requires both `cm` and `sm` to be instances of `MonadMessage`. This is an mtl style type class for sending and receiving messages between computations. At the moment the interface is quite poorly defined, so this will be improved later. We provide two monad transformer instances of this: `MessageAsyncT` for running two threads in one program and using async and stm to communicate and `MessageWebsocketT` which uses websockets. 
 
-##Ping server example
+## Ping server example
 
 Let's create a quite example - it will read a string and capitalize it for you remotely. We can start by importing some libraries.
 
