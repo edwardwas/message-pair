@@ -1,11 +1,13 @@
 {-# LANGUAGE ConstraintKinds       #-}
 {-# LANGUAGE DataKinds             #-}
+{-# LANGUAGE FlexibleContexts      #-}
 {-# LANGUAGE FlexibleInstances     #-}
 {-# LANGUAGE GADTs                 #-}
 {-# LANGUAGE MultiParamTypeClasses #-}
 {-# LANGUAGE RankNTypes            #-}
 {-# LANGUAGE ScopedTypeVariables   #-}
 {-# LANGUAGE TypeApplications      #-}
+{-# LANGUAGE TypeFamilies          #-}
 {-# LANGUAGE UndecidableInstances  #-}
 
 module Control.Monad.ServerOrClient
@@ -22,15 +24,21 @@ module Control.Monad.ServerOrClient
     , runOnServer_
     , runOnClient
     , runOnClient_
+    , embedOnServer
+    , embedOnServer_
+    , embedOnClient
+    , embedOnClient_
     ) where
 
 import           Control.Monad.MessagePass
 
+import           Control.Monad.Base
 import           Control.Monad.Reader
 import           Control.Monad.State
+import           Control.Monad.Trans.Control
 import           Control.Monad.Writer
 import           Data.Proxy
-import           Data.Serialize            hiding (get, put)
+import           Data.Serialize              hiding (get, put)
 
 -- | Where the code is running, either on the server or on the client. This is more often used at the type level thanks to DataKinds
 data Location = Server | Client
@@ -142,6 +150,10 @@ instance (MonadState s sm, MonadState s cm, SLocationI location) =>
     get = onBoth (Proxy @(MonadState s)) get
     put s = onBoth (Proxy @(MonadState s)) (put s)
 
+instance (MonadBase b sm, MonadBase b cm, SLocationI location) =>
+  MonadBase b (ServerOrClient sm cm location) where
+    liftBase ba = onBoth (Proxy @(MonadBase b)) (liftBase ba)
+
 -- | Run a compuation in sm only on the server. The server completes the action, and then sends the result to the client. The client blocks here until it recieves the result. The result is encoded via `Serialize`, hence the constraint on the output type
 runOnServer ::
        forall location sm cm a.
@@ -191,3 +203,76 @@ runOnClient_ act =
     case sLocation :: SLocation location of
         SServer -> return ()
         SClient -> OnClient act
+
+embedOnServer ::
+       forall location a b sm cm m.
+       ( MonadBaseControl m sm
+       , MonadBaseControl m cm
+       , SLocationI location
+       , StM sm b ~ b
+       , StM cm b ~ b
+       , MonadMessage sm
+       , MonadMessage cm
+       , Serialize b
+       )
+    => (a -> sm b)
+    -> ServerOrClient sm cm location (a -> m b)
+embedOnServer func =
+    case sLocation :: SLocation location of
+        SServer ->
+            OnServer $
+            embed $ \a -> do
+                res <- func a
+                sendMessage res
+                return res
+        SClient -> OnClient $ embed $ \_ -> (waitForMessage  :: cm b)
+
+embedOnServer_ ::
+       forall location a sm cm bm.
+       ( SLocationI location
+       , StM sm () ~ ()
+       , MonadBaseControl bm sm
+       , Applicative cm
+       )
+    => (a -> sm ())
+    -> ServerOrClient sm cm location (a -> bm ())
+embedOnServer_ func =
+    case sLocation :: SLocation location of
+        SServer -> OnServer $ embed func
+        SClient -> pure $ const $ pure ()
+
+embedOnClient ::
+       forall location a b sm cm bm.
+       ( MonadBaseControl bm sm
+       , MonadBaseControl bm cm
+       , SLocationI location
+       , StM sm b ~ b
+       , StM cm b ~ b
+       , MonadMessage sm
+       , MonadMessage cm
+       , Serialize b
+       )
+    => (a -> cm b)
+    -> ServerOrClient sm cm location (a -> bm b)
+embedOnClient func =
+    case sLocation :: SLocation location of
+        SClient ->
+            OnClient $
+            embed $ \a -> do
+                res <- func a
+                sendMessage res
+                return res
+        SServer -> OnServer $ embed $ \_ -> (waitForMessage :: sm b)
+
+embedOnClient_ ::
+       forall location a sm cm bm.
+       ( SLocationI location
+       , StM cm () ~ ()
+       , MonadBaseControl bm cm
+       , Applicative sm)
+    => (a -> cm ())
+    -> ServerOrClient sm cm location (a -> bm ())
+embedOnClient_ func =
+    case sLocation :: SLocation location of
+        SServer -> pure $ const $ pure ()
+        SClient -> OnClient $ embed func

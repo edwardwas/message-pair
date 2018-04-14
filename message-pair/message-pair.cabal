@@ -25,5 +25,7 @@ library
     , bytestring
     , cereal
     , mtl
+    , monad-control
+    , transformers-base
   hs-source-dirs:      src
   default-language:    Haskell2010
